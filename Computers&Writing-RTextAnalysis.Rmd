@@ -1,0 +1,285 @@
+---
+title: "Computers & Writing 2025: Text Analysis with R"
+author: "Katherine A. Ireland"
+date: "05/15/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+install.packages("knitr")
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 📦 Load Required Packages
+
+```{r packages}
+install.packages(c("gutenbergr", "dplyr", "tidytext", "ggplot2", "quanteda", "stringr", "readr", "janeaustenr"))
+install.packages("quanteda.textstats")
+library(quanteda.textstats)
+library(tidyverse)
+install.packages("tidyverse")
+library(gutenbergr)
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+library(quanteda)
+library(stringr)
+install.packages("readr")
+library(readr)
+library(janeaustenr)
+```
+
+## 🧩 Section 1: Analyzing *Austen* with `tidytext` and `quanteda`
+
+### 1.1 Download and Clean Text
+
+```{r load-austen}
+austen_books <- austen_books() %>%
+  mutate(line = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter \\d+", ignore_case = TRUE))))
+
+
+```
+
+### 1.2 Tokenize and Remove Stopwords
+
+```{r tokenize-austen}
+data("stop_words")
+austen_words <- austen_books %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+View(austen_words)
+```
+
+### 1.3 Visualize Word Frequencies
+
+```{r word-freq}
+austen_words %>%
+  count(word, sort = TRUE) %>%
+  slice_max(n, n = 10) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top Words in Austen", x = NULL, y = "Frequency")
+```
+
+### 1.4 Sentiment Analysis
+
+```{r sentiment-frank}
+bing <- get_sentiments("bing")
+austen_sentiment <- austen_words %>%
+  inner_join(bing) %>%
+  count(sentiment)
+
+ggplot(austen_sentiment, aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_col() +
+  labs(title = "Overall Sentiment in Austen")
+```
+```{r}
+library(tidyr)
+sentiment_by_book <- austen_books %>%
+  unnest_tokens(word, text) %>%
+  inner_join(bing) %>%
+  count(book, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>%
+  mutate(net_sentiment = positive - negative)
+
+sentiment_by_book %>%
+  ggplot(aes(x = reorder(book, net_sentiment), y = net_sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Net Sentiment by Jane Austen Novel", x = NULL, y = "Net Sentiment Score")
+#adjust this to show positive sentiment per novel and negative sentiment per novel
+```
+
+### 1.5 `quanteda`: DFM and Top Features
+
+```{r quanteda-austen}
+# Build corpus with metadata per novel
+austen_corpus <- corpus(austen_books, text_field = "text")
+
+# Check summary by book
+summary(austen_corpus)
+
+# Create dfm
+tokens_clean <- tokens(austen_corpus, remove_punct = TRUE)
+tokens_clean <- tokens_remove(tokens_clean, pattern = stopwords("en"))
+
+austen_dfm <- dfm(tokens_clean)
+
+# View top features
+topfeatures(austen_dfm, 10)
+
+
+```
+```{r quanteda-multi-word}
+# Collocations (e.g., frequent multi-word expressions)
+austen_tokens <- tokens(austen_corpus, remove_punct = TRUE)
+books_split <- split(austen_books, austen_books$book)
+
+# Example: Multi-word Expressions in "Emma"
+emma_tokens <- tokens(books_split[["Emma"]]$text, remove_punct = TRUE)
+emma_multi <- textstat_collocations(emma_tokens, size = 2)
+head(emma_multi, 10)
+
+#Example: Multi-word Expressions in Pride & Prejudice
+# Example: collocations in "Pride & Prejudice"
+pp_tokens <- tokens(books_split[["Pride & Prejudice"]]$text, remove_punct = TRUE)
+pp_multi <- textstat_collocations(pp_tokens, size = 2)
+head(pp_multi, 10)
+```
+```{r quanteda-kwic}
+# Keywords in context (KWIC) for "marriage"
+marriage <-kwic(tokens(austen_corpus), pattern = "marriage", window = 5)
+View(multi)
+
+
+# Multiword expression search (e.g., "young man")
+multi<- kwic(tokens(austen_corpus, pattern = phrase("young man"), window = 5))
+
+# Regex example: words starting with "marri"
+regex <- kwic(tokens(austen_corpus, pattern = "marri*", window = 5,case_insensitive = TRUE, valuetype = "regex"))
+View(regex)
+```
+
+## ⚖️ Section 2: Uploading your own text (Frankenstein)
+```{r upload-owntext}
+##How to upload your own with the frankenstein txt
+path_data <-system.file("/Users/file_path/", package = "readtext")
+
+
+dat_ip <- readtext("/Users/path_to_your_folder/*.txt")
+corpus <- quanteda::corpus(dat_ip)
+```
+
+## ⚖️ Section 3: Topic Modeling
+```{r lda-topic-modeling}
+# Prepare document-term matrix for topic modeling
+library(topicmodels)
+
+# Convert dfm to a topicmodels-compatible object
+austen_dtm <- convert(austen_dfm, to = "topicmodels")
+
+# Fit LDA model with 4 topics (adjust as needed)
+lda_model <- LDA(austen_dtm, k = 4, control = list(seed = 1234))
+
+# Get top terms per topic
+library(tidytext)
+tidy_lda <- tidy(lda_model)
+# Show top terms per topic as a list
+library(knitr)
+tidy_lda %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  summarise(terms = paste(term, collapse = ", ")) %>%
+  kable()
+
+# Visualize top terms
+
+tidy_lda %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  ggplot(aes(x = reorder_within(term, beta, topic), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_x_reordered() +
+  coord_flip() +
+  labs(title = "Top Terms in LDA Topics", x = NULL, y = "Beta")
+```
+#### 🧪 Option 1: Filter Common Names Before Topic Modeling
+
+```{r filter-common-names}
+# Remove common character names/titles that dominate topics
+austen_dfm_clean <- dfm_remove(austen_dfm, pattern = c("mr", "mrs", "miss", "elizabeth", "elinor", "darcy"))
+
+austen_dtm_clean <- convert(austen_dfm_clean, to = "topicmodels")
+lda_clean <- LDA(austen_dtm_clean, k = 4, control = list(seed = 4321))
+ tidy(lda_clean) %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  summarise(terms = paste(term, collapse = ", ")) %>%
+  knitr::kable()
+#Note: what do we think about this output?
+
+```
+
+#### 🧠 Option 2: Use Part-of-Speech (POS) Tagging for Topic Modeling
+
+```{r lda-pos-tagging, eval=FALSE}
+# Requires cleanNLP and a backend like spaCy (or udpipe)
+install.packages("cleanNLP")
+library(cleanNLP)
+
+# Use spaCy backend (you can also use udpipe for no Python dependency)
+library(udpipe)
+library(janeaustenr)
+
+# Download English model if needed
+ud_model <- udpipe_download_model(language = "english")
+ud_model <- udpipe_load_model(file = ud_model$file_model)
+pp_text <- books_split[["Pride & Prejudice"]] %>%
+  pull(text) %>%
+  paste(collapse = " ")
+
+# Annotate with udpipe
+udpipe_anno <- udpipe_annotate(ud_model, x = pp_text)
+udpipe_df <- as.data.frame(udpipe_anno)
+
+# Filter to nouns, verbs, adjectives
+udpipe_filtered <- udpipe_df %>%
+  filter(upos %in% c("NOUN", "VERB", "ADJ"))
+
+# Create DFM using lemmas
+library(quanteda)
+lemma_dfm <- udpipe_filtered %>%
+  count(doc_id, lemma) %>%
+  cast_dfm(document = doc_id, term = lemma, value = n)
+lemma_dfm <- dfm_trim(lemma_dfm, min_termfreq = 10)
+# Topic modeling
+library(topicmodels)
+pos_dtm <- convert(lemma_dfm, to = "topicmodels")
+lda_pos <- LDA(pos_dtm, k = 4, control = list(seed = 5678))
+
+# Visualize top terms
+library(tidytext)
+library(knitr)
+tidy(lda_pos) %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  summarise(terms = paste(term, collapse = ", ")) %>%
+  kable()
+
+```
+
+#### 🔄 Optional: Run LDA per novel
+
+```{r lda-by-novel}
+# Example: LDA on just "Emma"
+emma_dfm <- dfm(tokens(books_split[["Emma"]]$text, remove_punct = TRUE), remove = stopwords("en"))%>% dfm_trim(min_termfreq = 5)
+
+emma_dtm <- convert(emma_dfm, to = "topicmodels")
+lda_emma <- LDA(emma_dtm, k = 3, control = list(seed = 2025))
+tidy(lda_emma) %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 8) %>%
+  summarise(terms = paste(term, collapse = ", ")) %>%
+  kable()
+
+# Repeat for "Pride & Prejudice"
+pp_dfm <- dfm(tokens(books_split[["Pride & Prejudice"]]$text, remove_punct = TRUE), remove = stopwords("en")) %>%
+  dfm_trim(min_termfreq = 5)
+
+pp_dtm <- convert(pp_dfm, to = "topicmodels")
+lda_pp <- LDA(pp_dtm, k = 3, control = list(seed = 2025))
+tidy(lda_pp) %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 8) %>%
+  summarise(terms = paste(term, collapse = ", ")) %>%
+  kable()
+```
+```{r- }
+
+```
+
